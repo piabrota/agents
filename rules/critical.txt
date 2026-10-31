@@ -1,0 +1,12 @@
+# Settings on nix-os' "Do not break the machine" list (AGENTS.md): a pull request whose diff adds or
+# removes a line matching one of these gets a high finding asking for a careful look. One extended
+# regular expression per line.
+qemuGuest|qemu-guest-agent
+cloud-init|services\.cloud-init|cloudInit
+networking\.useDHCP
+services\.openssh|PasswordAuthentication|authorizedKeys
+boot\.loader\.grub
+fileSystems\."/"
+stateVersion
+magicRollback|trusted-users
+users\.users\.deploy
