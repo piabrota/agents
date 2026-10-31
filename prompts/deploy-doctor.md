@@ -23,6 +23,9 @@ Failures fall into two kinds:
   or build error, a NixOS assertion, or a unit that fails during activation (look for the unit's
   name and its error in the log, then for its module in `repo/`).
 
+`lessons.md` lists past reports people judged wrong, with what they said; do not repeat those
+mistakes.
+
 `run.json` may also hold `rule`: a known transient failure the harness matched in the log. Then
 the verdict is transient whatever you find; explain what happened.
 
