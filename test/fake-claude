@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Stands in for `claude` in test/run.sh: records its arguments and the files it was given, and
+# answers with $FAKE_CLAUDE_ANSWER.
+set -euo pipefail
+{
+  printf 'args: %s \n' "$*"
+  printf 'cwd-files:\n'
+  find . -path ./repo/.git -prune -o -type f -print | sort
+  for f in previous.md snapshot.md; do
+    [ -f "$f" ] && printf -- '--- %s\n%s\n' "$f" "$(cat "$f")"
+  done
+} >>"$FAKE_CLAUDE_LOG"
+printf '%s\n' "$FAKE_CLAUDE_ANSWER"
