@@ -1,0 +1,21 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["answer", "confidence", "evidence"],
+  "properties": {
+    "answer": { "type": "string", "minLength": 1, "maxLength": 2500 },
+    "confidence": { "enum": ["high", "medium", "low"] },
+    "evidence": {
+      "type": "array", "maxItems": 5,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["file", "quote"],
+        "properties": {
+          "file": { "type": "string", "pattern": "^(thread\\.md|diff\\.patch|repo/[^ ]+)$" },
+          "quote": { "type": "string", "minLength": 3, "maxLength": 300 }
+        }
+      }
+    }
+  }
+}
