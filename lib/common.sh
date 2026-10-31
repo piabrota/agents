@@ -7,6 +7,12 @@ GITHUB_API=${GITHUB_API:-https://api.github.com}
 # The repository the agents watch and report on.
 REPO=${REPO:-piabrota/nix-os}
 REPO_GIT_URL=${REPO_GIT_URL:-https://github.com/$REPO}
+# Where the agents that write push their branches (a local path in the tests).
+REPO_PUSH_URL=${REPO_PUSH_URL:-https://github.com/$REPO.git}
+# The App's user, as it shows on what it posts, and the people whose word the agents take: they
+# answer only those (a public repository, and every answer is subscription usage).
+BOT_LOGIN=${BOT_LOGIN:-piabrota-ops[bot]}
+TRUSTED_USERS=${TRUSTED_USERS:-h0ffmann}
 
 log() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >&2; }
 die() {
@@ -40,6 +46,65 @@ gh_api() {
 gh_download() {
   curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
     "$GITHUB_API/$1"
+}
+
+# strip_ansi: stdin to stdout without terminal colour codes, which a log keeps and a quote cannot.
+strip_ansi() { sed -E 's/\x1b\[[0-9;]*[A-Za-z]//g; s/\x1b\][^\x07]*\x07//g'; }
+
+# mint_token PERMISSIONS_JSON...: set GH_TOKEN to an installation token for $REPO with the first set
+# of permissions the App has, and TOKEN_PERMS to that set; the sets go from the most to the least
+# the agent wants. Call it directly, not in $(...): it sets variables.
+mint_token() {
+  local perms token
+  for perms in "$@"; do
+    if token=$(github_app_token "$REPO" "$perms" 2>/dev/null) && [ -n "$token" ]; then
+      export GH_TOKEN=$token TOKEN_PERMS=$perms
+      log "token for $REPO: $perms"
+      return 0
+    fi
+  done
+  die "piabrota-ops has none of the permissions asked for on $REPO"
+}
+
+# token_can PERMISSION: whether the token mint_token logged includes it (TOKEN_PERMS holds the set).
+token_can() { jq -e --arg p "$1" '.[$p] == "write"' <<<"${TOKEN_PERMS:-{\}}" >/dev/null; }
+
+# trusted LOGIN ASSOCIATION: whether the agents take this person's word: a TRUSTED_USERS login, or
+# an owner, member or collaborator of the repository.
+trusted() {
+  case " $TRUSTED_USERS " in *" $1 "*) return 0 ;; esac
+  case "${2:-}" in OWNER | MEMBER | COLLABORATOR) return 0 ;; esac
+  return 1
+}
+
+# upsert_comment NUMBER MARKER BODY: the App's one comment on issue or pull request NUMBER that
+# holds MARKER, edited in place, or a new one. Prints its URL.
+upsert_comment() {
+  local number=$1 marker=$2 body=$3 id
+  id=$(gh_api GET "repos/$REPO/issues/$number/comments?per_page=100" |
+    jq -r --arg m "$marker" --arg b "$BOT_LOGIN" '[.[] | select(.user.login == $b and (.body | contains($m)))][0].id // empty')
+  if [ -n "$id" ]; then
+    gh_api PATCH "repos/$REPO/issues/comments/$id" "$(jq -n --arg b "$body" '{body: $b}')" | jq -r .html_url
+  else
+    gh_api POST "repos/$REPO/issues/$number/comments" "$(jq -n --arg b "$body" '{body: $b}')" | jq -r .html_url
+  fi
+}
+
+# bot_identity: GIT_AUTHOR/COMMITTER as the App's bot user, whose noreply email needs its user id
+# (not the App's), as marola-devkit's bot-token does.
+bot_identity() {
+  local id
+  id=$(gh_api GET "users/${BOT_LOGIN/\[bot\]/%5Bbot%5D}" | jq -r .id)
+  export GIT_AUTHOR_NAME=$BOT_LOGIN GIT_COMMITTER_NAME=$BOT_LOGIN
+  export GIT_AUTHOR_EMAIL="$id+$BOT_LOGIN@users.noreply.github.com" GIT_COMMITTER_EMAIL="$id+$BOT_LOGIN@users.noreply.github.com"
+}
+
+# push_branch DIR BRANCH: push the branch with the installation token in a header, never in the URL
+# (which logs and git's config could keep).
+push_branch() {
+  local auth
+  auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+  git -C "$1" -c "http.extraHeader=Authorization: Basic $auth" push -q "$REPO_PUSH_URL" "HEAD:refs/heads/$2"
 }
 
 # ensure_label NAME COLOR DESCRIPTION: create the label in $REPO unless it exists.

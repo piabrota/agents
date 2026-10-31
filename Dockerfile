@@ -12,7 +12,7 @@ ARG CLAUDE_CODE_SHA256_ARM64=55cdb8e162d190432696ea54010e0fca2e18d06fa7a7127fd56
 ARG TARGETARCH
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates curl git jq openssl \
+      ca-certificates curl git jq openssl postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
 RUN set -eu; \
