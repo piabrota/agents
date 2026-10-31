@@ -32,6 +32,7 @@ COPY bin /opt/agents/bin
 COPY lib /opt/agents/lib
 COPY agents /opt/agents/agents
 COPY prompts /opt/agents/prompts
+COPY rules /opt/agents/rules
 
 USER 10001
 WORKDIR /home/agent

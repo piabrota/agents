@@ -10,19 +10,15 @@ What you are looking at, in the current directory:
 - `deploys.json`: the last deploys, newest first.
 - `previous.md`: the previous digest, to compare with.
 
-Use only these files. Never repeat a secret, token, key or password you may see.
+Answer with these fields (the schema fixes their form), each a sentence or two:
 
-Answer in GitHub Markdown, at most fifteen lines, in this shape and nothing else (no preamble, no
-sign-off):
-
-**<the snapshot's date>: OK | attention | problem**, and the reason in a few words.
-
-- **Services:** failed units, and any unit that matters that is not active. "All active" if so.
-- **Memory and disk:** used and available, and the change since the previous digest.
-- **Kubernetes:** pods not Running or Completed, and restarts since the previous digest.
-- **Deploys:** the last day's, and any failure.
-- **Errors:** the journal errors that matter, grouped, with counts. "None" if so.
-- **Watch:** what is getting worse over days, if anything; leave the line out otherwise.
-
-"problem" is something down or failing now; "attention" is something that will become a problem
-(a disk filling up, memory near its limit, a unit restarting); "OK" otherwise.
+- `date`: the snapshot's date.
+- `status`: "problem" is something down or failing now; "attention" is something that will become a
+  problem (a disk filling up, memory near its limit, a unit restarting); "OK" otherwise.
+- `reason`: the status's reason, in a few words.
+- `services`: failed units, and any unit that matters that is not active; "All active" if so.
+- `memory_and_disk`: used and available, and the change since the previous digest.
+- `kubernetes`: pods not Running or Completed, and restarts since the previous digest.
+- `deploys`: the last day's, and any failure.
+- `errors`: the journal errors that matter, grouped, with counts; "None" if so.
+- `watch`: what is getting worse over days; empty if nothing.

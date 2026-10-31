@@ -1,0 +1,18 @@
+# Strict rules for the repository's Python (test/fake_github.py today), checked by
+# .github/workflows/code-smell.yml. Every rule, minus the ones that contradict each other or the
+# formatter.
+target-version = "py310"
+line-length = 120
+
+[lint]
+select = ["ALL"]
+ignore = [
+  "D203",   # one-blank-line-before-class: contradicts D211
+  "D213",   # multi-line-summary-second-line: contradicts D212
+  "COM812", # trailing commas: the formatter's job
+  "ISC001", # implicit string concatenation: conflicts with the formatter
+]
+
+[lint.per-file-ignores]
+# test/ holds scripts the tests run, not a package.
+"test/*" = ["INP001"]

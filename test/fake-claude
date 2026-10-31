@@ -1,13 +1,26 @@
 #!/usr/bin/env bash
-# Stands in for `claude` in test/run.sh: records its arguments and the files it was given, and
-# answers with $FAKE_CLAUDE_ANSWER.
+# Stands in for `claude` in test/run.sh. `--version` prints a version. Otherwise it records its
+# arguments and the files it was given, and answers with the next line of $FAKE_CLAUDE_ANSWERS (a
+# structured answer in JSON per line, or "error"), wrapped as `--output-format json` wraps it.
 set -euo pipefail
+if [ "${1:-}" = --version ]; then
+  echo "2.1.316 (Claude Code)"
+  exit 0
+fi
 {
-  printf 'args: %s \n' "$*"
+  printf 'call\n'
+  printf 'arg: %s\n' "$@"
   printf 'cwd-files:\n'
   find . -path ./repo/.git -prune -o -type f -print | sort
   for f in previous.md snapshot.md; do
     [ -f "$f" ] && printf -- '--- %s\n%s\n' "$f" "$(cat "$f")"
   done
 } >>"$FAKE_CLAUDE_LOG"
-printf '%s\n' "$FAKE_CLAUDE_ANSWER"
+n=$(grep -c '^call$' "$FAKE_CLAUDE_LOG")
+answer=$(sed -n "${n}p" "$FAKE_CLAUDE_ANSWERS")
+if [ "$answer" = error ] || [ -z "$answer" ]; then
+  echo '{"type":"result","subtype":"error_max_structured_output_retries","is_error":true,"num_turns":4,"duration_ms":9000}'
+  exit 0
+fi
+jq -nc --argjson a "$answer" '{type: "result", subtype: "success", is_error: false, num_turns: 3,
+  duration_ms: 41000, modelUsage: {"claude-sonnet-5-5": {inputTokens: 1}}, structured_output: $a}'

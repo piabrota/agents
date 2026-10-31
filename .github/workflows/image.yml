@@ -6,9 +6,9 @@ name: image
 on:
   push:
     branches: [main]
-    paths: ['Dockerfile', 'bin/**', 'lib/**', 'agents/**', 'prompts/**', '.github/workflows/image.yml']
+    paths: ['Dockerfile', 'bin/**', 'lib/**', 'agents/**', 'prompts/**', 'rules/**', '.github/workflows/image.yml']
   pull_request:
-    paths: ['Dockerfile', 'bin/**', 'lib/**', 'agents/**', 'prompts/**', '.github/workflows/image.yml']
+    paths: ['Dockerfile', 'bin/**', 'lib/**', 'agents/**', 'prompts/**', 'rules/**', '.github/workflows/image.yml']
   workflow_dispatch:
 
 permissions:
