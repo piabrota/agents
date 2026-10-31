@@ -1,0 +1,8 @@
+# Log lines that make a deploy failure transient whatever else the log says: re-running passes.
+# One rule per line: a name, a tab, an extended regular expression (grep -E). The harness checks
+# them before Claude Code runs; Claude explains the failure but cannot change the verdict.
+ssh-timeout	ssh: connect to host .* (Connection timed out|Operation timed out|No route to host)
+ssh-refused	ssh: connect to host .* Connection refused
+ssh-reset	(Connection reset by peer|kex_exchange_identification: read: Connection reset)
+cache-5xx	(unable to download|error: .* HTTP error (500|502|503|504)).*(cache\.nixos\.org|github(usercontent)?\.com)
+runner-lost	The runner has received a shutdown signal|lost communication with the server

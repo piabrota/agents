@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# agent NAME: run one of piabrota's agents once. A rax task's command (README).
+set -euo pipefail
+AGENTS_HOME=${AGENTS_HOME:-$(cd "$(dirname "$0")/.." && pwd)}
+export AGENTS_HOME
+case "${1:-}" in
+  deploy-doctor | health-digest) exec "$AGENTS_HOME/agents/$1.sh" ;;
+  *)
+    echo "usage: agent deploy-doctor | health-digest" >&2
+    exit 2
+    ;;
+esac

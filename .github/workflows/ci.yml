@@ -1,0 +1,18 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: shellcheck bin/agent agents/*.sh lib/*.sh test/run.sh test/fake-claude
+      # The agents against a fake GitHub and a fake claude: no network, no secrets.
+      - run: test/run.sh
