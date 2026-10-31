@@ -1,0 +1,7 @@
+# Documents kept in two languages that must change together (nix-os' AGENTS.md). One pair per line:
+# the pt-BR file, a tab, the English one. docs/<X>.ptBR.md and docs/<X>.md pair by name without
+# being listed here.
+wiki/Home.md	wiki/Home-EN.md
+wiki/Arquitetura.md	wiki/Architecture.md
+wiki/Operacao.md	wiki/Operations.md
+wiki/Maquetes.md	wiki/Mockups.md

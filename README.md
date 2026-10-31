@@ -8,17 +8,42 @@ tasks, one pod per run (rax's pod runner), on a Claude subscription rather than 
 
 | Agent | Runs | Reads | Writes |
 |---|---|---|---|
-| `deploy-doctor` | often (every 15 minutes) | failed runs of nix-os' `deploy` workflow in the last day without an issue: the failed jobs' logs (last 400 lines) and the repository at that commit | one issue per failed run, labelled `deploy-failure`: verdict, what failed, why, the evidence, what to do; and a short comment on the merged pull request the deploy came from, linking it |
-| `health-digest` | once a day | the box's health snapshot (the ConfigMap `ax-tasks/health-snapshot`, which the box writes), the last deploys, the previous digest | a comment on the open issue labelled `health-digest` (opened the first time) |
+| `deploy-doctor` | in `tick` | failed runs of nix-os' `deploy` workflow in the last day without an issue: the failed jobs' logs (last 400 lines, colour codes stripped) and the repository at that commit | one issue per failed run, labelled `deploy-failure`: verdict, what failed, why, the evidence, what to do; a short comment on the merged pull request the deploy came from; and, when the verdict is `real`, **a fix pull request** against the branch that failed |
+| `pr-reviewer` | in `tick` | each open pull request whose head it has not reviewed: its diff, commits, body, and the repository at its head | one review comment, edited on each push: the rules the harness checks itself, and Claude's findings, each quoting a line of the diff |
+| `mentions` | in `tick` | comments naming `@piabrota-ops` in the last hour, from trusted people only | one reply each: an answer from the thread and the repository, with its evidence; or `try a fix` (a deploy-failure issue) and `review` (a pull request) as commands |
+| `mirror-keeper` | in `tick` | open pull requests that change a doc but not its mirror (pt-BR and English) | a pull request into that pull request's branch that brings the mirrors up to date |
+| `flake-annotator` | in `tick` | open pull requests labelled `flake-update` (nix-os' weekly workflow opens them with the closure difference) | one comment per head: the update's risk and what to watch after it deploys |
+| `feedback` | in `tick` | the agents' issues labelled `report-wrong`, and their comments with a 👎 from a trusted person | lessons in memory, which each agent reads before it writes again |
+| `health-digest` | once a day | the box's health snapshot (the ConfigMap `ax-tasks/health-snapshot`, which the box writes), the last deploys, the previous digest and the last week's from memory | a comment on the open issue labelled `health-digest` (opened the first time) |
 
-`deploy-doctor` calls Claude only when there is a new failure; otherwise it reads two lists and
-exits. Every report ends with a small signature: the agent, the model and Claude Code's version,
-the turns and time it took, and where it ran (user, pod, OS, kernel, CPUs, RAM, its memory limit,
-the image).
+`agent tick` runs the agents that watch GitHub one after the other in one pod, every few minutes:
+each exits in seconds when there is nothing new, without calling Claude, and one that fails does
+not stop the rest. Every report ends with a small signature: the agent, the model and Claude Code's
+version, the turns and time it took, and where it ran (user, pod, OS, kernel, CPUs, RAM, its
+memory limit, the image).
+
+## Memory and feedback
+
+`lib/memory.sh` keeps what the agents did (diagnoses, reviews, digests, replies, fixes) and what
+people said about it, in PGX on the box (`AGENTS_DB_URL`, the Secret `ax-tasks/agents-memory`; a
+`file://` directory in the tests; without it, no memory). Two ways to say a report was wrong: the
+label `report-wrong` on an issue the App opened, with a comment saying why, or a 👎 on a comment it
+posted. `feedback` turns each into a lesson for the agent that wrote it, and that agent reads its
+last lessons before it writes again. They are also the cases to check a prompt change against.
+
+## Agents that write
+
+`deploy-doctor`'s fixes and `mirror-keeper` push branches (`agents/...`) and open pull requests;
+they never merge: a merge to nix-os' main is a deploy, and that stays a person's call. The harness
+checks a diff before it pushes: at most 5 files and 200 lines for a fix, nothing under
+`.github/workflows/` or `keys/`, not `flake.lock`, a key file or `system.stateVersion`, nothing
+shaped like a credential; the mirror keeper may change only the mirrors. Pull requests are bipr
+(pt-BR, then English) and carry no signature; the signature goes in a comment. They need Contents
+read and write on the App; without it, these two do nothing and the rest work as before.
 
 ## The image
 
-`ghcr.io/piabrota/agents`, from `Dockerfile`: Debian slim, `curl`, `jq`, `openssl`, `git`, and
+`ghcr.io/piabrota/agents`, from `Dockerfile`: Debian slim, `curl`, `jq`, `openssl`, `git`, `psql` (for memory), and
 Claude Code's standalone binary (2.1.316, its checksum pinned), as user 10001. About 525 MB, most
 of it Claude Code. `.github/workflows/image.yml` publishes it on every push to `main` that changes
 it; the run summary prints the digest that nix-os pins. A task's command picks the agent:
@@ -40,8 +65,11 @@ written from `/var/lib/kubesolo-secrets/agents.env` on the box (nix-os' `docs/KU
 | `GH_APP_ID` | piabrota-ops' App ID |
 | `GH_APP_PRIVATE_KEY_B64` | Its private key, the `.pem` file in base64 on one line: `base64 -w0 piabrota-ops.*.pem` (on macOS, `base64 -i <file>`) |
 
-Optional: `REPO` (default `piabrota/nix-os`), `DEPLOY_DOCTOR_MODEL` (`sonnet`),
-`HEALTH_DIGEST_MODEL` (`haiku`), `LOOKBACK_HOURS` (`24`), `LOG_LINES` (`400`),
+Optional: `AGENTS_DB_URL` (memory; nix-os writes it as its own Secret), `REPO` (default
+`piabrota/nix-os`), `TRUSTED_USERS` (`h0ffmann`; beyond the repository's owners, members and
+collaborators), the models (`DEPLOY_DOCTOR_MODEL`, `PR_REVIEWER_MODEL`, `MENTIONS_MODEL`,
+`MIRROR_KEEPER_MODEL`, `FLAKE_ANNOTATOR_MODEL`: `claude-sonnet-5-5`; `HEALTH_DIGEST_MODEL`:
+`claude-haiku-5-5`), `FIX_PRS` (`1`), `TICK_AGENTS`, `LOOKBACK_HOURS` (`24`), `LOG_LINES` (`400`),
 `HEALTH_SNAPSHOT_FILE` (a file instead of the ConfigMap).
 
 ## The GitHub App, piabrota-ops
@@ -51,14 +79,14 @@ its `bot-token` action. What they post shows as `piabrota-ops[bot]`, and says no
 tool that wrote it.
 
 - Created in the org's settings (Settings, Developer settings, GitHub Apps), with no webhook.
-  Repository permissions: Actions read, Contents read, Issues read and write, Pull requests read
-  and write (for the doctor's comment on the deploy's pull request; without it the doctor opens its
-  issue and skips the comment), Metadata read.
+  Repository permissions: Actions read, Contents read and write (for fix and mirror pull
+  requests), Issues read and write, Pull requests read and write, Metadata read. Each agent asks
+  for the most it can use and falls back to less: without Contents write there are no fix or
+  mirror pull requests, without Pull requests write no comments on pull requests.
   Installed on `piabrota/nix-os` only.
 - `lib/github-app.sh` mints each token from the App's key: for one named repository, with only
-  the permissions that agent needs (`deploy-doctor`: actions read, contents read, issues write,
-  pull requests write;
-  `health-digest`: actions read, issues write), valid one hour. It refuses an empty repository or
+  the permissions that agent needs (`lib/common.sh`'s `mint_token` takes them from the most to the
+  least), valid one hour. It refuses an empty repository or
   permission set, which GitHub would otherwise read as all of them.
 - The key stays on the VPS. If a leak is suspected, revoke it in the App's settings, generate a
   new one, and replace `GH_APP_PRIVATE_KEY_B64` in `agents.env`.

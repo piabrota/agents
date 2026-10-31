@@ -1,21 +1,30 @@
 #!/usr/bin/env bash
 # Stands in for `claude` in test/run.sh. `--version` prints a version. Otherwise it records its
-# arguments and the files it was given, and answers with the next line of $FAKE_CLAUDE_ANSWERS (a
-# structured answer in JSON per line, or "error"), wrapped as `--output-format json` wraps it.
+# arguments and the files it was given (and the logs' text), runs $FAKE_CLAUDE_EDIT in its working
+# directory when it was given the Edit tool, and answers with the next line of
+# $FAKE_CLAUDE_ANSWERS (a structured answer in JSON per line, or "error"), wrapped as
+# `--output-format json` wraps it.
 set -euo pipefail
 if [ "${1:-}" = --version ]; then
   echo "2.1.316 (Claude Code)"
   exit 0
 fi
+tools=
+prev=
+for a in "$@"; do
+  [ "$prev" = --tools ] && tools=$a
+  prev=$a
+done
 {
   printf 'call\n'
   printf 'arg: %s\n' "$@"
   printf 'cwd-files:\n'
   find . -path ./repo/.git -prune -o -type f -print | sort
-  for f in previous.md snapshot.md; do
+  for f in previous.md snapshot.md history.json lessons.md logs/*.log; do
     [ -f "$f" ] && printf -- '--- %s\n%s\n' "$f" "$(cat "$f")"
   done
 } >>"$FAKE_CLAUDE_LOG"
+case ",$tools," in *,Edit,*) [ -n "${FAKE_CLAUDE_EDIT:-}" ] && bash -c "$FAKE_CLAUDE_EDIT" ;; esac
 n=$(grep -c '^call$' "$FAKE_CLAUDE_LOG")
 answer=$(sed -n "${n}p" "$FAKE_CLAUDE_ANSWERS")
 if [ "$answer" = error ] || [ -z "$answer" ]; then

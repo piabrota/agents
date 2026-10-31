@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["title_pt", "summary_pt", "summary_en", "commit_message"],
+  "properties": {
+    "title_pt": { "type": "string", "minLength": 3, "maxLength": 70 },
+    "summary_pt": { "type": "string", "minLength": 10, "maxLength": 1500 },
+    "summary_en": { "type": "string", "minLength": 10, "maxLength": 1500 },
+    "commit_message": { "type": "string", "minLength": 10, "maxLength": 1000 },
+    "no_fix_reason": { "type": "string", "maxLength": 600 }
+  }
+}

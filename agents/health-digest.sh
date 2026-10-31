@@ -8,6 +8,8 @@
 . "$AGENTS_HOME/lib/common.sh"
 # shellcheck source=lib/github-app.sh
 . "$AGENTS_HOME/lib/github-app.sh"
+# shellcheck source=lib/memory.sh
+. "$AGENTS_HOME/lib/memory.sh"
 
 MODEL=${HEALTH_DIGEST_MODEL:-claude-haiku-5-5}
 LABEL=health-digest
@@ -49,6 +51,10 @@ since=$(date -u -d "-3 days" +%Y-%m-%dT%H:%M:%SZ)
 gh_api GET "repos/$REPO/issues/$issue/comments?since=$since&per_page=100" |
   jq -r 'last.body // "There is no previous digest: this is the first."' >"$work/previous.md"
 
+# The last week's digests from memory, for trends beyond yesterday, and what people said was wrong.
+mem_recent health-digest digest 7 | jq '[.[] | {date: .subject, digest: .data}]' >"$work/history.json"
+lessons health-digest >"$work/lessons.md"
+
 answer=
 for try in 1 2; do
   log "writing the digest with $MODEL (try $try)"
@@ -69,5 +75,6 @@ body=$(jq -r '"**\(.date): \(.status)**, \(.reason)\n\n"
   + "- **Errors:** \(.errors)"
   + (if (.watch // "") != "" then "\n- **Watch:** \(.watch)" else "" end)' <<<"$answer" | scrub)
 body=$(printf '%s\n\n%s\n' "$body" "$(signature health-digest "$result")")
+mem_log health-digest digest "$(jq -r .date <<<"$answer")" "$answer"
 gh_api POST "repos/$REPO/issues/$issue/comments" "$(jq -n --arg b "$body" '{body: $b}')" |
   jq -r '"digest: \(.html_url)"' >&2

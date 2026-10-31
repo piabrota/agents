@@ -9,6 +9,8 @@ What you are looking at, in the current directory:
   Kubernetes pods and their restarts.
 - `deploys.json`: the last deploys, newest first.
 - `previous.md`: the previous digest, to compare with.
+- `history.json`: the last week's digests, newest first (empty at first), for trends over days.
+- `lessons.md`: past digests people judged wrong, with what they said; do not repeat those mistakes.
 
 Answer with these fields (the schema fixes their form), each a sentence or two:
 
