@@ -32,7 +32,7 @@ github_app_token() {
   jwt=$(github_app_jwt)
   installation=$(curl -fsS -H "Authorization: Bearer $jwt" -H "Accept: application/vnd.github+json" \
     "$GITHUB_API/repos/$repo/installation" | jq -er .id) ||
-    die "piabrota-ops is not installed on $repo"
+    die "${BOT_LOGIN%\[bot\]} is not installed on $repo"
   jq -n --arg r "${repo#*/}" --argjson p "$perms" '{repositories: [$r], permissions: $p}' |
     curl -fsS -X POST -H "Authorization: Bearer $jwt" -H "Accept: application/vnd.github+json" \
       --data-binary @- "$GITHUB_API/app/installations/$installation/access_tokens" |

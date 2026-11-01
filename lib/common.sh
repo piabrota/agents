@@ -63,7 +63,7 @@ mint_token() {
       return 0
     fi
   done
-  die "piabrota-ops has none of the permissions asked for on $REPO"
+  die "${BOT_LOGIN%\[bot\]} has none of the permissions asked for on $REPO"
 }
 
 # token_can PERMISSION: whether the token mint_token logged includes it (TOKEN_PERMS holds the set).
