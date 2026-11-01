@@ -4,11 +4,11 @@ set -euo pipefail
 AGENTS_HOME=${AGENTS_HOME:-$(cd "$(dirname "$0")/.." && pwd)}
 export AGENTS_HOME
 case "${1:-}" in
-  tick | feedback | deploy-doctor | health-digest | pr-reviewer | mentions | mirror-keeper | flake-annotator | issue-worker)
+  tick | feedback | deploy-doctor | health-digest | pr-reviewer | mentions | mirror-keeper | flake-annotator | gramatico-loop | issue-worker)
     exec "$AGENTS_HOME/agents/$1.sh"
     ;;
   *)
-    echo "usage: agent tick | feedback | deploy-doctor | health-digest | pr-reviewer | mentions | mirror-keeper | flake-annotator | issue-worker" >&2
+    echo "usage: agent tick | feedback | deploy-doctor | health-digest | pr-reviewer | mentions | mirror-keeper | flake-annotator | gramatico-loop | issue-worker" >&2
     exit 2
     ;;
 esac

@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -24,7 +25,7 @@ state: dict = json.loads(STATE_FILE.read_text())
 for key, empty in (("issues", []), ("comments", {}), ("labels", []), ("prs", []), ("reactions", {})):
     state.setdefault(key, empty)
 REPO = state["repo"]
-BOT = "piabrota-ops[bot]"
+BOT = state.get("bot", "piabrota-ops[bot]")
 TOKEN = "ghs_fake"  # noqa: S105 - the fake installation token the tests expect, not a secret
 NOT_GRANTED = "The permissions requested are not granted to this installation."
 counter = {"n": max([i["number"] for i in state["issues"]] + [p["number"] for p in state["prs"]] + [0])}
@@ -109,13 +110,18 @@ def new_label(_m: re.Match, _q: dict, body: dict) -> Reply:
     return ok(body, 201)
 
 
+def label_names(item: dict) -> list[str]:
+    """Return the names of an issue's labels, kept as text in the state or as objects."""
+    return [n["name"] if isinstance(n, dict) else n for n in item.get("labels", [])]
+
+
 def issues(_m: re.Match, query: dict, _b: object) -> Reply:
     """GET issues (and pull requests, which are issues too) by label and state."""
     wanted = query.get("labels", [""])[0]
     which = query.get("state", ["open"])[0]
     every = state["issues"] + [{**p, "pull_request": {}} for p in state["prs"]]
-    found = [i for i in every if wanted in i.get("labels", []) and which in ("all", i.get("state", "open"))]
-    return ok(found)
+    found = [i for i in every if wanted in label_names(i) and which in ("all", i.get("state", "open"))]
+    return ok([{**i, "labels": [{"name": n} for n in label_names(i)]} for i in found])
 
 
 def issue(m: re.Match, _q: dict, _b: object) -> Reply:
@@ -154,6 +160,27 @@ def all_comments(_m: re.Match, _q: dict, _b: object) -> Reply:
     return ok([c for thread in state["comments"].values() for c in thread])
 
 
+def issue_events(m: re.Match, _q: dict, _b: object) -> Reply:
+    """GET an issue's events."""
+    return ok(state.get("events", {}).get(m.group(1), []))
+
+
+def add_labels(m: re.Match, _q: dict, body: dict) -> Reply:
+    """POST labels on an issue or pull request."""
+    number = int(m.group(1))
+    item = next((i for i in state["issues"] + state["prs"] if i["number"] == number), None)
+    if item is None:
+        return ok({"message": "Not Found"}, 404)
+    item["labels"] = label_names(item) + body["labels"]
+    return ok([{"name": n} for n in item["labels"]])
+
+
+def repo_runs(_m: re.Match, query: dict, _b: object) -> Reply:
+    """GET the repository's runs at one commit."""
+    sha = query.get("head_sha", [""])[0]
+    return ok({"workflow_runs": [r for r in state["runs"] if r["head_sha"] == sha]})
+
+
 def new_comment(m: re.Match, _q: dict, body: dict) -> Reply:
     """POST a comment on an issue or pull request, as the App."""
     thread = state["comments"].setdefault(m.group(1), [])
@@ -163,6 +190,7 @@ def new_comment(m: re.Match, _q: dict, body: dict) -> Reply:
         "body": body["body"],
         "user": {"login": BOT, "type": "Bot"},
         "author_association": "NONE",
+        "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "issue_url": f"https://api.github.com/repos/{REPO}/issues/{m.group(1)}",
         "html_url": f"https://github.com/{REPO}/issues/{m.group(1)}#issuecomment-{cid}",
         "reactions": {},
@@ -187,9 +215,10 @@ def reactions(m: re.Match, _q: dict, _b: object) -> Reply:
 
 
 def pulls(_m: re.Match, query: dict, _b: object) -> Reply:
-    """GET open pull requests, optionally by head (owner:branch)."""
+    """GET pull requests by state, optionally by head (owner:branch)."""
     head = query.get("head", [""])[0].split(":")[-1]
-    found = [p for p in state["prs"] if p.get("state", "open") == "open" and head in ("", p["head"]["ref"])]
+    which = query.get("state", ["open"])[0]
+    found = [p for p in state["prs"] if p.get("state", "open") == which and head in ("", p["head"]["ref"])]
     return ok(found)
 
 
@@ -256,8 +285,9 @@ OPEN_ROUTES: list[Route] = [
     ("GET", r"/blob/(\d+)", blob),
 ]
 ROUTES: list[Route] = [
-    ("GET", r"/users/piabrota-ops\[bot\]", bot_user),
+    ("GET", r"/users/[a-z0-9-]+\[bot\]", bot_user),
     ("GET", rf"/repos/{REPO}/actions/workflows/deploy\.yml/runs", runs),
+    ("GET", rf"/repos/{REPO}/actions/runs", repo_runs),
     ("GET", rf"/repos/{REPO}/actions/runs/(\d+)", run),
     ("GET", rf"/repos/{REPO}/actions/runs/(\d+)/jobs", jobs),
     ("GET", rf"/repos/{REPO}/actions/jobs/(\d+)/logs", job_log),
@@ -275,6 +305,8 @@ ROUTES: list[Route] = [
     ("DELETE", rf"/repos/{REPO}/issues/(\d+)/labels/(.+)", remove_label),
     ("GET", rf"/repos/{REPO}/collaborators/([^/]+)/permission", permission),
     ("GET", rf"/repos/{REPO}/issues/(\d+)/comments", comments),
+    ("GET", rf"/repos/{REPO}/issues/(\d+)/events", issue_events),
+    ("POST", rf"/repos/{REPO}/issues/(\d+)/labels", add_labels),
     ("POST", rf"/repos/{REPO}/issues/(\d+)/comments", new_comment),
     ("GET", rf"/repos/{REPO}/pulls", pulls),
     ("POST", rf"/repos/{REPO}/pulls", new_pull),

@@ -465,12 +465,213 @@ worker_writes "$done_result" 'echo ghp_abcdefghijklmnopqrstuvwxyz0123456789 >>do
 run_worker 2>"$tmp/err" || bad "it exits 0 ($(cat "$tmp/err"))"
 check "no pull request" "[ -z \"\$(posted pulls)\" ] && posted issues/65/comments | jq -e '.body | contains(\"shaped like a credential\")' >/dev/null"
 
+scenario "issue-worker: a .git the worker rewrote runs nothing" "$real_log" "$(ready_issue 67 h0ffmann)"
+worker_writes "$done_result" "echo more >>docs/X.md; mkdir -p evil/objects evil/refs; echo 'ref: refs/heads/main' >evil/HEAD; printf '[core]\\n\\trepositoryformatversion = 0\\n\\tfsmonitor = touch $tmp/worker-pwned\\n' >evil/config; echo 'gitdir: evil' >.git"
+run_worker 2>"$tmp/err" || bad "it exits 0 ($(cat "$tmp/err"))"
+check "the harness never read it" "[ ! -e '$tmp/worker-pwned' ]"
+git -C "$tmp/nix-os" branch -qD agents/issue-67 2>/dev/null || true
+
+scenario "issue-worker: a nested .git is refused" "$real_log" "$(ready_issue 68 h0ffmann)"
+worker_writes "$done_result" "echo more >>docs/X.md; mkdir -p sub/.git; echo x >sub/.git/config"
+run_worker 2>"$tmp/err" || bad "it exits 0 ($(cat "$tmp/err"))"
+check "no pull request, and the issue says why" \
+  "[ -z \"\$(posted pulls)\" ] && posted issues/68/comments | jq -e '.body | contains(\"a .git of its own\")' >/dev/null"
+
 scenario "issue-worker: nothing labelled, nothing started" "$real_log"
 : >"$FAKE_AO_LOG"
 run_worker 2>"$tmp/err" || bad "it exits 0 ($(cat "$tmp/err"))"
 check "no worker" "[ ! -s '$FAKE_AO_LOG' ] && grep -q 'no issue labelled agent-ready' '$tmp/err'"
+# The gramatico loop: its own repository, its own App, its own credentials.
+git init -q -b main "$tmp/gramatico"
+g=$tmp/gramatico
+mkdir -p "$g/skills/bipr" "$g/.github/workflows" "$g/src"
+printf '# AGENTS.md\n' >"$g/AGENTS.md"
+printf '# gramatico\n' >"$g/README.md"
+printf '# gramatico\n' >"$g/README.en.md"
+printf '# regras\n\n⚠ uma regra sem fonte\n' >"$g/SKILL.md"
+printf 'old\n' >"$g/src/a.txt"
+printf 'gone\n' >"$g/src/b.txt"
+printf '#[test]\nfn a() {}\n' >"$g/src/t.rs"
+printf '<img> Generated with bipr\n' >"$g/skills/bipr/footer.md"
+printf 'on: push\n' >"$g/.github/workflows/ci.yml"
+printf '{}\n' >"$g/flake.lock"
+git -C "$g" add .
+git -C "$g" -c user.name=t -c user.email=t@t commit -q -m one
+export LOOP_GIT_URL=$g LOOP_PUSH_URL=$g PIRSIG_APP_ID=7654321 PIRSIG_APP_PRIVATE_KEY_B64=$GH_APP_PRIVATE_KEY_B64
+gposted() { jq -c --arg p "/repos/piabrota/gramatico/$1" 'select(.method == "POST" and .path == $p) | .body' "$requests"; }
+loop_answer=$(jq -nc '{type: "feat", title_pt: "adiciona a regra nova", summary_pt: "Muda src/a.txt para a regra nova.",
+  summary_en: "Changes src/a.txt for the new rule.", commit_message: "feat: the new rule\n\nThe issue asks for it."}')
+# loop_state ISSUE_EXTRA EVENTS_EXTRA ROOT_EXTRA: one approved issue, #30, written by h0ffmann.
+loop_state() {
+  jq -nc --argjson i "${1:-{\}}" --argjson e "${2:-{\}}" --argjson r "${3:-{\}}" '{
+    repo: "piabrota/gramatico", bot: "pirsig-2nd-brain[bot]", runs: [],
+    issues: [{number: 30, state: "open", title: "a regra nova", body: "Pede a regra.", user: {login: "h0ffmann"},
+      author_association: "OWNER", labels: ["loop/pronto", "prioridade/média"]} + $i],
+    events: {"30": [{event: "labeled", label: {name: "loop/pronto"}, actor: {login: "h0ffmann"}, created_at: "2026-01-01T00:00:00Z"} + $e]}
+  } + $r'
+}
+# attempt_comment ISSUE CREATED_AT: one attempt the loop already charged.
+attempt_comment() {
+  jq -nc --argjson n "$1" --arg t "$2" '{id: (8000 + $n), body: "<!-- pirsig-2nd-brain:attempt --> <!-- sha=main -->\nAttempt.",
+    user: {login: "pirsig-2nd-brain[bot]", type: "Bot"}, author_association: "NONE", created_at: $t}'
+}
+today=$(date -u +%Y-%m-%dT00:00:01Z)
+head_of_main() { git -C "$g" rev-parse main; }
+no_spend() { [ "$(calls)" -eq 0 ] && [ -z "$(gposted pulls)" ]; }
+edit_a='echo new >repo/src/a.txt'
+
+scenario "gramatico-loop: without its App it does nothing" "$real_log" "$(loop_state)"
+env -u PIRSIG_APP_ID -u PIRSIG_APP_PRIVATE_KEY_B64 bin/agent gramatico-loop 2>"$tmp/err" || bad "it exits 0 ($(cat "$tmp/err"))"
+check "it says so, asks GitHub nothing, and never uses piabrota-ops' key" \
+  "grep -q 'the loop is off' '$tmp/err' && ! sent '.path | test(\"app|repos\")' && [ \"\$(calls)\" -eq 0 ]"
+
+scenario "gramatico-loop: an approved issue becomes a pull request" "$real_log" "$(loop_state)"
+export FAKE_CLAUDE_EDIT=$edit_a
+answers "$loop_answer"
+before=$(head_of_main)
+bin/agent gramatico-loop 2>"$tmp/err" || bad "it exits 0 ($(cat "$tmp/err"))"
+check "the token is for gramatico alone, with what the loop needs" \
+  "sent '.path == \"/app/installations/7/access_tokens\" and .body.repositories == [\"gramatico\"] and .body.permissions == {actions: \"read\", contents: \"write\", issues: \"write\", pull_requests: \"write\"}'"
+check "the model has file tools and nothing that runs code" \
+  "[ \"\$(argval --tools)\" = Read,Grep,Glob,Edit,Write ] && grep -qx 'arg: --restricted' '$FAKE_CLAUDE_LOG'"
+check "it gets the issue, its thread and no git directory" \
+  "grep -q './issue.json' '$FAKE_CLAUDE_LOG' && grep -q './thread.json' '$FAKE_CLAUDE_LOG' && ! grep -qE '^\./repo/\.git/' '$FAKE_CLAUDE_LOG'"
+lpr=$(gposted pulls)
+lbranch=$(jq -r .head <<<"$lpr")
+check "the attempt is charged on the issue before the pull request" \
+  "jq -s -e '[.[] | select(.method == \"POST\") | .path] | (index(\"/repos/piabrota/gramatico/issues/30/comments\") < index(\"/repos/piabrota/gramatico/pulls\"))' '$requests' >/dev/null && gposted issues/30/comments | jq -e 'select(.body | contains(\"pirsig-2nd-brain:attempt\"))' >/dev/null"
+check "a pull request from loop/issue-30-<time> into main, titled by type" \
+  "jq -e '(.head | test(\"^loop/issue-30-[0-9]{14}$\")) and .base == \"main\" and .title == \"feat: adiciona a regra nova\"' <<<\"\$lpr\" >/dev/null"
+check "its body is a bipr that closes the issue, says nothing ran, and ends with the skill's footer" \
+  "jq -e '.body | (contains(\"**Resumo**: Muda\") and contains(\"Closes #30\") and contains(\"\n---\n\") and contains(\"**Summary**: Changes\") and contains(\"⚠ nothing ran\") and endswith(\"Generated with bipr\"))' <<<\"\$lpr\" >/dev/null"
+check "the commit is the App's, changes one file, and carries gramatico's trailers" \
+  "[ \"\$(git -C '$g' log -1 --format=%an '$lbranch')\" = 'pirsig-2nd-brain[bot]' ] && [ \"\$(git -C '$g' diff --name-only main '$lbranch')\" = src/a.txt ] && git -C '$g' log -1 --format=%B '$lbranch' | grep -qx 'Co-Authored-By: Claude <noreply@anthropic.com>' && git -C '$g' log -1 --format=%B '$lbranch' | grep -q '^Tested: not run here'"
+check "main does not move, and nothing merges" \
+  "[ \"\$(head_of_main)\" = '$before' ] && ! jq -s -e 'any(.[]; .path | test(\"merge\"))' '$requests' >/dev/null"
+check "the pull request is labelled with its type, and the signature goes in a comment" \
+  "gposted issues/31/labels | jq -e '.labels == [\"tipo/feat\"]' >/dev/null && gposted issues/31/comments | jq -e '.body | contains(\"<sub>gramatico-loop\")' >/dev/null && ! jq -e '.body | contains(\"<sub>\")' <<<\"\$lpr\" >/dev/null"
+git -C "$g" branch -qD "$lbranch"
+
+scenario "gramatico-loop: the model cannot plant code in the git directory" "$real_log" "$(loop_state)"
+export FAKE_CLAUDE_EDIT='echo new >repo/src/a.txt; mkdir -p repo/.git/hooks; printf "#!/bin/sh\ntouch '"$tmp"'/pwned\n" >repo/.git/hooks/pre-commit; chmod +x repo/.git/hooks/pre-commit; printf "[core]\n\tfsmonitor = touch '"$tmp"'/pwned\n\thooksPath = .git/hooks\n" >repo/.git/config'
+answers "$loop_answer"
+bin/agent gramatico-loop 2>"$tmp/err" || bad "it exits 0 ($(cat "$tmp/err"))"
+pwned_branch=$(gposted pulls | jq -r .head)
+check "neither the hook nor the fsmonitor ran, and only the real change is committed" \
+  "[ ! -e '$tmp/pwned' ] && [ \"\$(git -C '$g' diff --name-only main '$pwned_branch')\" = src/a.txt ]"
+git -C "$g" branch -qD "$pwned_branch"
+
+# refused NAME ISSUE_EXTRA EVENTS_EXTRA ROOT_EXTRA LINE: the loop runs, spends nothing, and logs LINE.
+refused() {
+  scenario "gramatico-loop: $1" "$real_log" "$(loop_state "${2:-{\}}" "${3:-{\}}" "${4:-{\}}")"
+  answers "$loop_answer"
+  bin/agent gramatico-loop 2>"$tmp/err" || bad "it exits 0 ($(cat "$tmp/err"))"
+  check "no model ran and no pull request opened" no_spend
+  check "it says why" "grep -qF -- '$5' '$tmp/err'"
+}
+refused "a label from someone else is not an approval" '{}' '{"actor": {"login": "stranger"}}' '{}' 'labelled by stranger, not an approver'
+refused "a stranger's issue never reaches the model" '{"user": {"login": "stranger"}, "author_association": "NONE"}' '{}' '{}' 'its author is not trusted'
+refused "the stop label halts everything" '{}' '{}' "$(jq -nc '{issues: [{number: 30, state: "open", title: "x", body: "", user: {login: "h0ffmann"}, author_association: "OWNER", labels: ["loop/pronto", "loop/pare"]}]}')" 'the label loop/pare'
+refused "the day's budget stops a new attempt" '{}' '{}' "$(jq -nc --argjson a "$(attempt_comment 7 "$today")" --argjson b "$(attempt_comment 8 "$today")" --argjson c "$(attempt_comment 9 "$today")" '{comments: {"7": [$a], "8": [$b], "9": [$c]}}')" '3 of 3 attempts today'
+refused "a closed pull request is a person's answer" '{}' '{}' "$(jq -nc '{prs: [{number: 40, state: "closed", closed_at: "2026-02-01T00:00:00Z", user: {login: "pirsig-2nd-brain[bot]"}, head: {ref: "loop/issue-30-20260201000000", sha: "abc", repo: {full_name: "piabrota/gramatico"}}, base: {ref: "main"}}]}')" 'a person decides what is next'
+
+scenario "gramatico-loop: the attempts run out, and it asks a person" "$real_log" "$(loop_state '{}' '{}' "$(jq -nc --argjson a "$(attempt_comment 1 2026-03-01T00:00:00Z)" --argjson b "$(attempt_comment 2 2026-03-02T00:00:00Z)" '{comments: {"30": [$a, $b]}}')")"
+bin/agent gramatico-loop 2>"$tmp/err" || bad "it exits 0 ($(cat "$tmp/err"))"
+check "no model ran, it says so on the issue, and it blocks the issue" \
+  "no_spend && gposted issues/30/comments | jq -e '.body | contains(\"needs a person\")' >/dev/null && gposted issues/30/labels | jq -e '.labels == [\"status/bloqueado\"]' >/dev/null"
+
+scenario "gramatico-loop: a new label starts the attempts again" "$real_log" "$(loop_state '{}' '{"created_at": "2026-04-01T00:00:00Z"}' "$(jq -nc --argjson a "$(attempt_comment 1 2026-03-01T00:00:00Z)" --argjson b "$(attempt_comment 2 2026-03-02T00:00:00Z)" '{comments: {"30": [$a, $b]}}')")"
+export FAKE_CLAUDE_EDIT=$edit_a
+answers "$loop_answer"
+bin/agent gramatico-loop 2>"$tmp/err" || bad "it exits 0 ($(cat "$tmp/err"))"
+check "the model runs" "[ \"\$(calls)\" -eq 1 ]"
+git -C "$g" branch -qD "$(gposted pulls | jq -r .head)"
+
+scenario "gramatico-loop: the model can decline" "$real_log" "$(loop_state)"
+answers "$(jq -c '.no_change_reason = "A issue pede uma decisão."' <<<"$loop_answer")"
+bin/agent gramatico-loop 2>"$tmp/err" || bad "it exits 0 ($(cat "$tmp/err"))"
+check "no pull request, and the reason is on the issue" \
+  "[ -z \"\$(gposted pulls)\" ] && gposted issues/30/comments | jq -e 'select(.body | contains(\"A issue pede uma decisão\"))' >/dev/null"
+
+# rejected NAME EDIT TEXT: the harness refuses what the model did, and nothing is pushed.
+rejected() {
+  scenario "gramatico-loop: rejected: $1" "$real_log" "$(loop_state)"
+  export FAKE_CLAUDE_EDIT=$2
+  answers "$loop_answer"
+  bin/agent gramatico-loop 2>"$tmp/err" || bad "it exits 0 ($(cat "$tmp/err"))"
+  check "no pull request, no branch, and the reason is on the issue" \
+    "[ -z \"\$(gposted pulls)\" ] && [ -z \"\$(git -C '$g' branch --list 'loop/*')\" ] && gposted issues/30/comments | jq -e --arg t '$3' 'select(.body | contains(\$t))' >/dev/null"
+}
+rejected "a workflow" 'echo x >>repo/.github/workflows/ci.yml' 'a file the loop may not touch: .github/workflows/ci.yml'
+rejected "AGENTS.md" 'echo x >>repo/AGENTS.md' 'a file the loop may not touch: AGENTS.md'
+rejected "a lock file" 'echo x >>repo/flake.lock' 'a file the loop may not touch: flake.lock'
+rejected "a Python file" 'echo x >repo/src/a.py' 'a file the loop may not touch: src/a.py'
+rejected "a new dependency" 'echo x >repo/src/Cargo.toml' 'a file the loop may not touch: src/Cargo.toml'
+rejected "a deleted file" 'rm repo/src/b.txt' 'a deleted file: src/b.txt'
+rejected "a symbolic link" 'ln -s /etc/passwd repo/src/l' 'a symbolic link: src/l'
+rejected "a binary file" 'printf "\000\001" >repo/src/x.bin' 'a binary file: src/x.bin'
+rejected "a removed warning" 'sed -i "s/⚠ //" repo/SKILL.md' 'a ⚠ was removed'
+rejected "fewer tests" 'printf "fn a() {}\n" >repo/src/t.rs' 'the change removes tests'
+rejected "a README without its mirror" 'echo x >>repo/README.md' 'README.md changes without its mirror README.en.md'
+rejected "too many lines" 'seq 400 >repo/src/a.txt' 'lines changed: at most 300'
+rejected "a credential" 'echo "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789" >repo/src/a.txt' 'something shaped like a credential'
+rejected "no change at all" 'true' 'no change'
+
+# A loop pull request on a real branch of the fixture: pr_state REF SHA RUNS_JSON ROOT_EXTRA.
+git -C "$g" checkout -q -b loop/issue-30-20260501000000
+printf 'first try\n' >"$g/src/a.txt"
+git -C "$g" -c user.name='pirsig-2nd-brain[bot]' -c user.email=b@b commit -q -am first
+pr_sha=$(git -C "$g" rev-parse HEAD)
+git -C "$g" checkout -q main
+pr_state() {
+  loop_state '{}' '{}' "$(jq -nc --arg sha "$pr_sha" --argjson runs "$1" --arg a "${2:-pirsig-2nd-brain[bot]}" --argjson r "${3:-{\}}" '{
+    runs: $runs,
+    jobs: {"77": [{id: 12, name: "check", conclusion: "failure", steps: []}]},
+    logs: {"12": "error: a rule has no row in origins.tsv"},
+    prs: [{number: 40, state: "open", title: "feat: x", body: "", user: {login: "pirsig-2nd-brain[bot]"},
+      head: {ref: "loop/issue-30-20260501000000", sha: $sha, repo: {full_name: "piabrota/gramatico"}}, base: {ref: "main"},
+      commits: [{sha: $sha, commit: {message: "first", author: {name: $a}}}], labels: []}]
+  } + $r')"
+}
+run_of() { jq -nc --arg sha "$pr_sha" --arg s "$1" --arg c "$2" '[{id: 77, head_sha: $sha, status: $s, conclusion: $c}]'; }
+
+scenario "gramatico-loop: a failed check gets a repair on the same branch" "$real_log" "$(pr_state "$(run_of completed failure)")"
+export FAKE_CLAUDE_EDIT=$edit_a
+answers "$loop_answer"
+bin/agent gramatico-loop 2>"$tmp/err" || bad "it exits 0 ($(cat "$tmp/err"))"
+check "the model gets the failed job's log" "grep -q './failure/job-12.log' '$FAKE_CLAUDE_LOG'"
+check "one more commit lands on the branch, no new pull request, and no new issue is taken" \
+  "[ \"\$(git -C '$g' rev-parse loop/issue-30-20260501000000~1)\" = '$pr_sha' ] && [ -z \"\$(gposted pulls)\" ]"
+check "the attempt names the commit" "gposted issues/30/comments | jq -e 'select(.body | contains(\"sha=$pr_sha\"))' >/dev/null"
+git -C "$g" update-ref refs/heads/loop/issue-30-20260501000000 "$pr_sha"
+
+scenario "gramatico-loop: one attempt per commit" "$real_log" "$(pr_state "$(run_of completed failure)" 'pirsig-2nd-brain[bot]' "$(jq -nc --arg s "$pr_sha" '{comments: {"30": [{id: 1, body: "x sha=\($s)", user: {login: "pirsig-2nd-brain[bot]"}, created_at: "2026-05-02T00:00:00Z"}]}}')")"
+bin/agent gramatico-loop 2>"$tmp/err" || bad "it exits 0 ($(cat "$tmp/err"))"
+check "no model ran" no_spend
+
+scenario "gramatico-loop: repairs run out, and it asks a person" "$real_log" "$(pr_state "$(run_of completed failure)" 'pirsig-2nd-brain[bot]' "$(jq -nc --argjson a "$(attempt_comment 1 2026-05-01T00:00:00Z)" --argjson b "$(attempt_comment 2 2026-05-02T00:00:00Z)" '{comments: {"30": [$a, $b]}}')")"
+bin/agent gramatico-loop 2>"$tmp/err" || bad "it exits 0 ($(cat "$tmp/err"))"
+check "no model ran, and the issue is blocked with the reason" \
+  "no_spend && gposted issues/30/comments | jq -e '.body | contains(\"still fail after 2 attempts\")' >/dev/null && gposted issues/30/labels | jq -e '.labels == [\"status/bloqueado\"]' >/dev/null"
+
+waits() { # waits NAME STATE LINE
+  scenario "gramatico-loop: $1" "$real_log" "$2"
+  bin/agent gramatico-loop 2>"$tmp/err" || bad "it exits 0 ($(cat "$tmp/err"))"
+  check "no model ran" no_spend
+  check "it says why" "grep -qF -- '$3' '$tmp/err'"
+}
+waits "green checks wait for a person" "$(pr_state "$(run_of completed success)")" 'waits for a person'
+waits "running checks are left to finish" "$(pr_state "$(run_of in_progress '')")" 'checks are running'
+waits "no check is not a pass" "$(pr_state '[]')" 'no check ran'
+waits "a person's commit means hands off" "$(pr_state "$(run_of completed failure)" h0ffmann)" 'a person committed here'
 
 echo "== guards"
+for setting in LOOP_MAX_ATTEMPTS=4 LOOP_MAX_PER_DAY=7 LOOP_MAX_FILES=21 LOOP_MAX_LINES=801 LOOP_MAX_ATTEMPTS=0 LOOP_MAX_PER_DAY=many; do
+  check "a limit cannot be opened: $setting" "! env $setting bin/agent gramatico-loop 2>'$tmp/err' && grep -q 'must be' '$tmp/err'"
+done
+check "the App's manifest cannot change workflows or settings" \
+  "jq -e '.default_permissions | keys == [\"actions\", \"contents\", \"issues\", \"metadata\", \"pull_requests\"] and .actions == \"read\"' apps/pirsig-2nd-brain.json >/dev/null"
+check "the loop calls no merge" "! grep -nE '/merge|merge_method|gh pr merge' agents/gramatico-loop.sh"
 check "a token needs its permissions named" \
   "! (. lib/common.sh && . lib/github-app.sh && github_app_token piabrota/nix-os '{}') 2>/dev/null"
 check "a missing Claude Code token is named, with where it comes from" \

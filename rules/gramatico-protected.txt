@@ -1,0 +1,37 @@
+# Paths the gramatico loop may not change, one extended regular expression per line, matched
+# against each changed path. What checks a change, or what runs on a person's machine, stays with
+# people: ouroboric's protected paths. A line here is a human's decision; never loosen one from the
+# loop itself.
+^\.github/
+^\.claude(-plugin)?/
+^\.gitmodules$
+^\.gitignore$
+^\.gitattributes$
+^\.mcp\.json$
+^\.opencode\.json$
+^\.zenodo\.json$
+^AGENTS\.md$
+^CHANGELOG\.md$
+^CITATION\.cff$
+^ISSUE_LABELS\.md$
+^LICENSE
+^REUSE\.md$
+^WHITEPAPER
+^flake\.(nix|lock)$
+^justfile$
+^nix/
+^scripts/
+^lint/
+^forks/
+^vendor/
+^opencode/
+^plugins/gramatico/bin/
+^plugins/gramatico/hooks/
+^plugins/.*plugin\.json$
+^app/src-tauri/gen/
+^app/.*rust-toolchain\.toml$
+(^|/)Cargo\.toml$
+(^|/)package(-lock)?\.json$
+(^|/)[^/]*\.lock$
+\.py$
+\.(pem|key|age|env)$

@@ -170,6 +170,21 @@ worktree_of() {
     awk -v b="branch refs/heads/$1" '/^worktree / {t = substr($0, 10)} $0 == b {print t}'
 }
 
+# use_gitdir BRANCH TREE: every git call from here on names the worktree's git directory, found in
+# the clone, which the worker cannot reach. Its `.git` file lies in the worker's directory, and with
+# a config it wrote, `git add` would run code in a pod that holds the App's key.
+use_gitdir() {
+  local tree=$2 g
+  for g in "$work"/repo/.git/worktrees/*/; do
+    if [ "$(cat "${g}gitdir" 2>/dev/null)" = "$tree/.git" ]; then
+      GIT_DIR=${g%/} GIT_WORK_TREE=$tree
+      export GIT_DIR GIT_WORK_TREE
+      return 0
+    fi
+  done
+  return 1
+}
+
 # start_ao: the daemon, for this run only, and $work/repo as its one project.
 start_ao() {
   local _
@@ -254,6 +269,11 @@ if [ -s "$tree/$RESULT_FILE" ]; then
     or (.status == "blocked" and (.reason | type == "string")))' "$tree/$RESULT_FILE" 2>/dev/null) || answer=
 fi
 rm -f "${tree:?}/${RESULT_FILE:?}"
+use_gitdir "$branch" "$tree" || die "no git directory for $tree"
+if [ -n "$(find "$tree" -mindepth 2 -name .git -print -quit)" ]; then
+  block "$number" "the worker left a .git of its own, so its work was dropped."
+  exit 0
+fi
 if [ -z "$answer" ]; then
   block "$number" "the worker finished without a result that fits, so its work was dropped."
   exit 0

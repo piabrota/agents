@@ -14,6 +14,7 @@
       "Read(//var/**)",
       "Read(//run/**)",
       "Edit(**/.claude/**)",
+      "Edit(**/.git)",
       "Edit(**/.git/**)",
       "Edit(**/.githooks/**)"
     ]
