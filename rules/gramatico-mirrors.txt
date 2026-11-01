@@ -1,0 +1,4 @@
+# Documents of piabrota/gramatico that must change together (AGENTS.md). One pair per line: the
+# pt-BR file, a tab, the English one.
+README.md	README.en.md
+docs/whitepaper/pt-BR.md	docs/whitepaper/en.md
