@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Stands in for Agent Orchestrator's `ao` in test/run.sh. It logs each call and the credentials in
+# its environment; `spawn` makes the worktree `ao` would and runs $FAKE_WORK in it; `session get`
+# answers with $FAKE_AO_STATUS (default working); `session exit-agent` fails when $FAKE_AO_EXIT is
+# fail. test/ao-smoke.sh checks these calls on the real
+# one.
+set -euo pipefail
+{
+  printf '%s\n' "$*"
+  env | sed -nE 's/^(GH_[A-Z_]*|TOKEN_PERMS|AGENTS_DB_URL|CLAUDE_CODE_OAUTH_TOKEN)=.*/env: \1/p'
+} >>"$FAKE_AO_LOG"
+state=$AO_DATA_DIR/fake
+mkdir -p "$state"
+case "$1" in
+  daemon) exec sleep 60 ;;
+  project)
+    case "$2" in add) sed -nE 's/.*--path ([^ ]+).*/\1/p' <<<"$*" >"$state/repo" ;; esac
+    ;;
+  spawn)
+    branch=$(sed -nE 's/.*--branch ([^ ]+).*/\1/p' <<<"$*")
+    tree=$AO_DATA_DIR/worktrees/worker/s-1
+    git -C "$(cat "$state/repo")" worktree add -q -b "$branch" "$tree"
+    (cd "$tree" && bash -c "${FAKE_WORK:-true}")
+    echo "spawned session s-1 \"$branch\" (working)"
+    ;;
+  session)
+    case "$2" in
+      get) jq -nc --arg s "${FAKE_AO_STATUS:-working}" '{session: {status: $s, activity: {state: "active"}, isTerminated: false}}' ;;
+      exit-agent) [ "${FAKE_AO_EXIT:-}" != fail ] ;;
+    esac
+    ;;
+esac

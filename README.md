@@ -14,6 +14,7 @@ tasks, one pod per run (rax's pod runner), on a Claude subscription rather than 
 | `mirror-keeper` | in `tick` | open pull requests that change a doc but not its mirror (pt-BR and English) | a pull request into that pull request's branch that brings the mirrors up to date |
 | `flake-annotator` | in `tick` | open pull requests labelled `flake-update` (nix-os' weekly workflow opens them with the closure difference) | one comment per head: the update's risk and what to watch after it deploys |
 | `feedback` | in `tick` | the agents' issues labelled `report-wrong`, and their comments with a 👎 from a trusted person | lessons in memory, which each agent reads before it writes again |
+| `issue-worker` | on its own schedule, one issue per run | the oldest open issue labelled `agent-ready` by someone who can write to the repository, and the repository at `main` | **a pull request** that closes it, on `agents/issue-<n>`; or, when it cannot, a comment on the issue saying why, and the label `agent-blocked` |
 | `health-digest` | once a day | the box's health snapshot (the ConfigMap `ax-tasks/health-snapshot`, which the box writes), the last deploys, the previous digest and the last week's from memory | a comment on the open issue labelled `health-digest` (opened the first time) |
 
 `agent tick` runs the agents that watch GitHub one after the other in one pod, every few minutes:
@@ -41,9 +42,40 @@ shaped like a credential; the mirror keeper may change only the mirrors. Pull re
 (pt-BR, then English) and carry no signature; the signature goes in a comment. They need Contents
 read and write on the App; without it, these two do nothing and the rest work as before.
 
+## The issue worker
+
+`issue-worker` runs a session of [Agent Orchestrator](https://github.com/OrchestratorInc/agent-orchestrator)
+(`ao`, built from a pinned commit into the image) in its pod. The daemon lives only as long as the
+run: it makes the worktree, starts Claude Code in `tmux` and watches the session. A pod has one
+session, so nothing here routes CI failures or review comments back to a worker: a failing pull
+request stays a person's, or a new issue's.
+
+A worker edits files and nothing else, because the pod's environment holds the App's key, and with
+it a merge, which on nix-os is a deploy:
+
+1. **No shell, no network, no git.** `rules/worker-settings.json`, installed as Claude Code's
+   managed settings, denies `Bash`, the web tools, sub-agents, reading `/proc` and writing `.claude/` or
+   `.git/`; it runs above every other setting and the agents' user cannot change it. Without it, the
+   worker does not start.
+2. **No credential but Claude's.** `ao` starts from an empty environment with Claude's token only.
+3. **The harness does the rest.** It reads `.agent-result.json`, checks the diff (at most 12 files
+   and 400 lines, as `MAX_WORK_FILES` and `MAX_WORK_LINES`, nothing under `.github/`, `.claude/` or `keys/`, not
+   `flake.lock`, a key file or `system.stateVersion`, nothing shaped like a credential), and only then mints a
+   write token, commits with the repository's hooks off, pushes and opens the pull request.
+
+Labels are the controls. `agent-ready` is the go-ahead, and counts only from someone who can write
+to the repository; the worker reads the issue's title and body, never its comments. The run moves
+it to `agent-working` before it starts, so a run that dies is not paid for twice, and to
+`agent-blocked` when a person has to step in. Optional keys: `ISSUE_WORKER_MODEL`
+(`claude-sonnet-5-5`), `ISSUE_WORKER_LABEL`, `WORK_TIMEOUT` (`2400` seconds), `IDLE_GRACE` (`180`).
+
+`test/ao-smoke.sh` runs the real `ao` from the image in a pod's limits, with a stand-in for Claude
+Code; run it by hand when `AO_COMMIT` changes.
+
 ## The image
 
-`ghcr.io/piabrota/agents`, from `Dockerfile`: Debian slim, `curl`, `jq`, `openssl`, `git`, `psql` (for memory), and
+`ghcr.io/piabrota/agents`, from `Dockerfile`: Debian slim, `curl`, `jq`, `openssl`, `git`, `tmux`, `psql` (for memory),
+`ao` (built from a pinned commit, for `issue-worker`), and
 Claude Code's standalone binary (2.1.316, its checksum pinned), as user 10001. About 525 MB, most
 of it Claude Code. `.github/workflows/image.yml` publishes it on every push to `main` that changes
 it; the run summary prints the digest that nix-os pins. A task's command picks the agent:
@@ -68,7 +100,7 @@ written from `/var/lib/kubesolo-secrets/agents.env` on the box (nix-os' `docs/KU
 Optional: `AGENTS_DB_URL` (memory; nix-os writes it as its own Secret), `REPO` (default
 `piabrota/nix-os`), `TRUSTED_USERS` (`h0ffmann`; beyond the repository's owners, members and
 collaborators), the models (`DEPLOY_DOCTOR_MODEL`, `PR_REVIEWER_MODEL`, `MENTIONS_MODEL`,
-`MIRROR_KEEPER_MODEL`, `FLAKE_ANNOTATOR_MODEL`: `claude-sonnet-5-5`; `HEALTH_DIGEST_MODEL`:
+`MIRROR_KEEPER_MODEL`, `FLAKE_ANNOTATOR_MODEL`, `ISSUE_WORKER_MODEL`: `claude-sonnet-5-5`; `HEALTH_DIGEST_MODEL`:
 `claude-haiku-5-5`), `FIX_PRS` (`1`), `TICK_AGENTS`, `LOOKBACK_HOURS` (`24`), `LOG_LINES` (`400`),
 `HEALTH_SNAPSHOT_FILE` (a file instead of the ConfigMap).
 
