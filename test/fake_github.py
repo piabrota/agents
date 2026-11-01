@@ -253,6 +253,18 @@ def new_pull(_m: re.Match, _q: dict, body: dict) -> Reply:
     return ok(created, 201)
 
 
+def remove_label(m: re.Match, _q: dict, _b: object) -> Reply:
+    """DELETE a label from an issue."""
+    found = next(i for i in state["issues"] if i["number"] == int(m.group(1)))
+    found["labels"] = [n for n in found.get("labels", []) if n != m.group(2)]
+    return ok([])
+
+
+def permission(m: re.Match, _q: dict, _b: object) -> Reply:
+    """GET a person's permission on the repository."""
+    return ok({"permission": state.get("permissions", {}).get(m.group(1), "read")})
+
+
 Route = tuple[str, str, "Callable[[re.Match, dict, dict], Reply]"]
 # The App's own calls (with its JWT) and storage come first: they need no installation token.
 OPEN_ROUTES: list[Route] = [
@@ -276,9 +288,11 @@ ROUTES: list[Route] = [
     ("PATCH", rf"/repos/{REPO}/issues/comments/(\d+)", edit_comment),
     ("GET", rf"/repos/{REPO}/issues/comments/(\d+)/reactions", reactions),
     ("GET", rf"/repos/{REPO}/issues/(\d+)", issue),
-    ("GET", rf"/repos/{REPO}/issues/(\d+)/comments", comments),
     ("GET", rf"/repos/{REPO}/issues/(\d+)/events", issue_events),
     ("POST", rf"/repos/{REPO}/issues/(\d+)/labels", add_labels),
+    ("DELETE", rf"/repos/{REPO}/issues/(\d+)/labels/(.+)", remove_label),
+    ("GET", rf"/repos/{REPO}/collaborators/([^/]+)/permission", permission),
+    ("GET", rf"/repos/{REPO}/issues/(\d+)/comments", comments),
     ("POST", rf"/repos/{REPO}/issues/(\d+)/comments", new_comment),
     ("GET", rf"/repos/{REPO}/pulls", pulls),
     ("POST", rf"/repos/{REPO}/pulls", new_pull),
@@ -333,6 +347,10 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         """Serve a POST."""
         self.handle_any("POST")
+
+    def do_DELETE(self) -> None:
+        """Serve a DELETE."""
+        self.handle_any("DELETE")
 
     def do_PATCH(self) -> None:
         """Serve a PATCH."""

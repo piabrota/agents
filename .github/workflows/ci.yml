@@ -13,6 +13,6 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - run: shellcheck bin/agent agents/*.sh lib/*.sh test/run.sh test/fake-claude
+      - run: shellcheck bin/agent agents/*.sh lib/*.sh test/run.sh test/fake-claude test/fake-ao test/ao-smoke.sh
       # The agents against a fake GitHub and a fake claude: no network, no secrets.
       - run: test/run.sh

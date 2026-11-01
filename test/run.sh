@@ -386,6 +386,101 @@ scenario "tick: every agent in turn; one that fails does not stop the rest" "$re
 check "a failing agent fails the tick, and the others ran" \
   "! TICK_AGENTS='missing-agent flake-annotator' bin/agent tick 2>'$tmp/err' && grep -q 'failed: missing-agent' '$tmp/err' && grep -q 'no open flake-update pull request' '$tmp/err'"
 
+# The worker's scenarios: test/fake-ao stands in for Agent Orchestrator, runs $FAKE_WORK in the
+# worktree it makes, and logs the environment the harness gave it.
+# The harness starts `ao` with an empty environment, so what the fake needs comes from a file.
+export FAKE_AO_LOG=$tmp/fake-ao.log FAKE_WORK='' FAKE_AO_STATUS='' FAKE_AO_EXIT=''
+printf '#!/usr/bin/env bash\n. %q\nexec %q "$@"\n' "$tmp/fake-ao.env" "$root/test/fake-ao" >"$tmp/ao"
+chmod +x "$tmp/ao"
+export AO_BIN=$tmp/ao POLL_SECONDS=0 IDLE_GRACE=0
+run_worker() {
+  declare -p FAKE_AO_LOG FAKE_WORK FAKE_AO_STATUS FAKE_AO_EXIT | sed 's/^declare -x /export /; s/^declare -- /export /' >"$tmp/fake-ao.env"
+  bin/agent issue-worker
+}
+cp rules/worker-settings.json "$tmp/worker-settings.json"
+chmod 444 "$tmp/worker-settings.json"
+export WORKER_SETTINGS=$tmp/worker-settings.json
+ready_issue() { # ready_issue NUMBER LABELLER: an issue labelled agent-ready by LABELLER
+  jq -nc --argjson n "$1" --arg by "$2" '{
+    issues: [{number: $n, state: "open", title: "Add a contact button", body: "A button in the footer.", labels: ["agent-ready"], user: {login: "someone"}}],
+    events: {"\($n)": [{event: "labeled", label: {name: "agent-ready"}, actor: {login: $by}}]}}'
+}
+done_result='{"status":"done","title_pt":"Site: botão de contato","summary_pt":"Um botão no rodapé.","summary_en":"A button in the footer."}'
+worker_writes() { # worker_writes RESULT SHELL: what the fake worker does in its worktree
+  FAKE_WORK="$2; printf '%s' '$1' >.agent-result.json"
+}
+
+scenario "issue-worker: an issue labelled by someone who can write becomes a pull request" "$real_log" "$(ready_issue 60 h0ffmann)"
+: >"$FAKE_AO_LOG"
+worker_writes "$done_result" 'printf "# X\n\nWith a button.\n" >docs/X.md; mkdir -p .claude; echo "{}" >.claude/settings.local.json'
+run_worker 2>"$tmp/err" || bad "it exits 0 ($(cat "$tmp/err"))"
+wpr=$(posted pulls)
+check "a pull request from agents/issue-60 to main, in both languages, closing the issue" \
+  "jq -e '.head == \"agents/issue-60\" and .base == \"main\" and .title == \"Site: botão de contato\" and (.body | contains(\"\n---\n\") and contains(\"Closes #60\"))' <<<\"\$wpr\" >/dev/null"
+check "the branch holds the change and neither the result nor ao's hooks file" \
+  "[ \"\$(git -C '$tmp/nix-os' diff --name-only main agents/issue-60)\" = docs/X.md ]"
+check "the worker's environment has no GitHub credential and no memory URL" \
+  "grep -q '^env: CLAUDE_CODE_OAUTH_TOKEN' '$FAKE_AO_LOG' && ! grep -qE '^env: (GH_|TOKEN_PERMS|AGENTS_DB_URL)' '$FAKE_AO_LOG'"
+check "the session is a worker on the issue's branch, with the pinned model" \
+  "grep -q -- 'spawn .*--branch agents/issue-60 .*--model claude-sonnet-5-5' '$FAKE_AO_LOG'"
+check "the issue's labels move, and it is told" \
+  "sent '.method == \"DELETE\" and (.path | endswith(\"/issues/60/labels/agent-ready\"))' && sent '.method == \"DELETE\" and (.path | endswith(\"/issues/60/labels/agent-working\"))' && posted issues/60/comments | jq -e '.body | contains(\"Pull request: #\") and contains(\"<sub>issue-worker\")' >/dev/null"
+check "nothing merges" "! sent '.path | endswith(\"/merge\")'"
+git -C "$tmp/nix-os" branch -qD agents/issue-60
+
+scenario "issue-worker: a label from someone who cannot write is ignored" "$real_log" "$(ready_issue 61 stranger | jq -c '. + {permissions: {stranger: "read"}}')"
+: >"$FAKE_AO_LOG"
+run_worker 2>"$tmp/err" || bad "it exits 0 ($(cat "$tmp/err"))"
+check "no worker, no pull request" "[ ! -s '$FAKE_AO_LOG' ] && [ -z \"\$(posted pulls)\" ] && grep -q 'who cannot write here: skipped' '$tmp/err'"
+
+scenario "issue-worker: a change the harness forbids goes back to a person" "$real_log" "$(ready_issue 62 h0ffmann)"
+worker_writes "$done_result" 'mkdir -p .github/workflows; echo x >.github/workflows/x.yml'
+run_worker 2>"$tmp/err" || bad "it exits 0 ($(cat "$tmp/err"))"
+check "no pull request, no branch, and the issue says why" \
+  "[ -z \"\$(posted pulls)\" ] && ! git -C '$tmp/nix-os' rev-parse -q --verify agents/issue-62 >/dev/null && posted issues/62/comments | jq -e '.body | contains(\"a file the worker may not touch: .github/workflows/x.yml\")' >/dev/null"
+check "it is labelled agent-blocked, not agent-working" \
+  "posted issues/62/labels | jq -s -e 'any(.[]; .labels == [\"agent-blocked\"])' >/dev/null && sent '.method == \"DELETE\" and (.path | endswith(\"/issues/62/labels/agent-working\"))'"
+
+scenario "issue-worker: a worker that says it is blocked opens nothing" "$real_log" "$(ready_issue 63 h0ffmann)"
+worker_writes '{"status":"blocked","reason":"which analytics provider is a decision"}' 'true'
+run_worker 2>"$tmp/err" || bad "it exits 0 ($(cat "$tmp/err"))"
+check "the reason reaches the issue" \
+  "[ -z \"\$(posted pulls)\" ] && posted issues/63/comments | jq -e '.body | contains(\"which analytics provider is a decision\")' >/dev/null"
+
+scenario "issue-worker: a worker that stops without a result drops its work" "$real_log" "$(ready_issue 64 h0ffmann)"
+FAKE_WORK='echo half >docs/X.md' FAKE_AO_STATUS=exited
+run_worker 2>"$tmp/err" || bad "it exits 0 ($(cat "$tmp/err"))"
+check "no pull request" "[ -z \"\$(posted pulls)\" ] && posted issues/64/comments | jq -e '.body | contains(\"without a result that fits\")' >/dev/null"
+FAKE_AO_STATUS=
+
+scenario "issue-worker: a worker that cannot be stopped drops its work" "$real_log" "$(ready_issue 66 h0ffmann)"
+worker_writes "$done_result" 'echo more >>docs/X.md'
+FAKE_AO_EXIT=fail
+run_worker 2>"$tmp/err" || bad "it exits 0 ($(cat "$tmp/err"))"
+check "no pull request" "[ -z \"\$(posted pulls)\" ] && posted issues/66/comments | jq -e '.body | contains(\"could not be stopped\")' >/dev/null"
+FAKE_AO_EXIT=
+
+scenario "issue-worker: a credential in the diff is never pushed" "$real_log" "$(ready_issue 65 h0ffmann)"
+worker_writes "$done_result" 'echo ghp_abcdefghijklmnopqrstuvwxyz0123456789 >>docs/X.md'
+run_worker 2>"$tmp/err" || bad "it exits 0 ($(cat "$tmp/err"))"
+check "no pull request" "[ -z \"\$(posted pulls)\" ] && posted issues/65/comments | jq -e '.body | contains(\"shaped like a credential\")' >/dev/null"
+
+scenario "issue-worker: a .git the worker rewrote runs nothing" "$real_log" "$(ready_issue 67 h0ffmann)"
+worker_writes "$done_result" "echo more >>docs/X.md; mkdir -p evil/objects evil/refs; echo 'ref: refs/heads/main' >evil/HEAD; printf '[core]\\n\\trepositoryformatversion = 0\\n\\tfsmonitor = touch $tmp/worker-pwned\\n' >evil/config; echo 'gitdir: evil' >.git"
+run_worker 2>"$tmp/err" || bad "it exits 0 ($(cat "$tmp/err"))"
+check "the harness never read it" "[ ! -e '$tmp/worker-pwned' ]"
+git -C "$tmp/nix-os" branch -qD agents/issue-67 2>/dev/null || true
+
+scenario "issue-worker: a nested .git is refused" "$real_log" "$(ready_issue 68 h0ffmann)"
+worker_writes "$done_result" "echo more >>docs/X.md; mkdir -p sub/.git; echo x >sub/.git/config"
+run_worker 2>"$tmp/err" || bad "it exits 0 ($(cat "$tmp/err"))"
+check "no pull request, and the issue says why" \
+  "[ -z \"\$(posted pulls)\" ] && posted issues/68/comments | jq -e '.body | contains(\"a .git of its own\")' >/dev/null"
+
+scenario "issue-worker: nothing labelled, nothing started" "$real_log"
+: >"$FAKE_AO_LOG"
+run_worker 2>"$tmp/err" || bad "it exits 0 ($(cat "$tmp/err"))"
+check "no worker" "[ ! -s '$FAKE_AO_LOG' ] && grep -q 'no issue labelled agent-ready' '$tmp/err'"
 # The gramatico loop: its own repository, its own App, its own credentials.
 git init -q -b main "$tmp/gramatico"
 g=$tmp/gramatico
@@ -581,6 +676,12 @@ check "a token needs its permissions named" \
   "! (. lib/common.sh && . lib/github-app.sh && github_app_token piabrota/nix-os '{}') 2>/dev/null"
 check "a missing Claude Code token is named, with where it comes from" \
   "{ CLAUDE_CODE_OAUTH_TOKEN= bin/agent health-digest 2>&1 || true; } | grep -q 'CLAUDE_CODE_OAUTH_TOKEN is not set (it comes from the Secret ax-tasks/agents'"
+check "a worker does not start without the settings that take its shell away" \
+  "{ WORKER_SETTINGS=/nonexistent bin/agent issue-worker 2>&1 || true; } | grep -q 'refusing to start a worker'"
+printf '{"permissions": {"deny": ["WebFetch"]}}\n' >"$tmp/weak-settings.json"
+chmod 444 "$tmp/weak-settings.json"
+check "nor with settings that leave it a shell" \
+  "{ WORKER_SETTINGS='$tmp/weak-settings.json' bin/agent issue-worker 2>&1 || true; } | grep -q 'refusing to start a worker'"
 check "an unknown agent is refused" "! bin/agent nope 2>/dev/null"
 bad_rules=0
 while IFS=$'\t' read -r _ r; do

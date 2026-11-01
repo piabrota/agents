@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "disableBypassPermissionsMode": "disable",
+    "deny": [
+      "Bash",
+      "WebFetch",
+      "WebSearch",
+      "NotebookEdit",
+      "Task",
+      "Read(//proc/**)",
+      "Read(//sys/**)",
+      "Read(//etc/**)",
+      "Read(//var/**)",
+      "Read(//run/**)",
+      "Edit(**/.claude/**)",
+      "Edit(**/.git)",
+      "Edit(**/.git/**)",
+      "Edit(**/.githooks/**)"
+    ]
+  }
+}
