@@ -1,0 +1,12 @@
+{
+  "name": "tyler-durden-bot",
+  "description": "Summarizes large pull requests on h0ffmann/proof in one comment: TLDR, ELI5, summary, risk. It reads pull requests and comments on them; it never pushes, approves or merges.",
+  "url": "https://github.com/piabrota/agents/tree/main/tyler-durden-bot",
+  "hook_attributes": { "url": "https://tyler.piabrota.art/p/tyler-durden/webhooks/tyler-durden", "active": true },
+  "public": false,
+  "default_permissions": {
+    "pull_requests": "write",
+    "metadata": "read"
+  },
+  "default_events": ["pull_request"]
+}

@@ -1,0 +1,78 @@
+# tyler-durden-bot: when it summarizes a pull request, what the comment carries, and how hard it
+# tries. Read by filter.py on every pull_request event; Hermes installs it beside the script.
+# Lines are a pull request's additions plus deletions, from each file's patch.
+
+# The watchlist. The App is installed on these repositories only; an event from any other is dropped.
+repos = ["h0ffmann/proof"]
+
+# Files that never count and never reach the model.
+ignore = ["*.lock", "package-lock.json", "flake.lock", "Cargo.lock", "*.svg", "*.pdf", "*.png", "*.jpg"]
+
+# Extensions counted as markdown, not as code.
+markdown = [".md", ".mdx", ".markdown"]
+
+# --- trigger: when the bot runs. Only on `opened`. A pull request is summarized when any threshold
+# below is reached (>=). 0 turns a threshold off.
+[trigger]
+code = 1000
+comment = 1000
+markdown = 1000
+total = 0          # code + comment + markdown together
+authors = []       # empty: every author
+skip_bots = true   # authors whose type is Bot (dependabot, piabrota-ops, piabrota-hermes)
+
+# One table per language, found by extension. line_comment and block_comment tell comment lines
+# from code. A language may set its own code, comment or total threshold, counted on its own lines
+# only; it does not replace the global ones. An extension that no language lists counts as code.
+[languages.rust]
+extensions = [".rs"]
+line_comment = ["//"]
+block_comment = [["/*", "*/"]]
+
+[languages.lean]
+extensions = [".lean"]
+line_comment = ["--"]
+block_comment = [["/-", "-/"]]
+
+[languages.nix]
+extensions = [".nix"]
+line_comment = ["#"]
+block_comment = [["/*", "*/"]]
+
+[languages.python]
+extensions = [".py"]
+line_comment = ["#"]
+block_comment = [['"""', '"""']]
+
+[languages.shell]
+extensions = [".sh", ".bash"]
+line_comment = ["#"]
+block_comment = []
+
+[languages.haskell]
+extensions = [".hs"]
+line_comment = ["--"]
+block_comment = [["{-", "-}"]]
+
+[languages.typescript]
+extensions = [".ts", ".tsx", ".js", ".jsx", ".mjs"]
+line_comment = ["//"]
+block_comment = [["/*", "*/"]]
+
+[languages.gleam]
+extensions = [".gleam"]
+line_comment = ["//"]
+block_comment = []
+
+# --- sections: what the comment carries, in this order.
+[sections]
+tldr = true
+eli5 = true
+summary = true
+risk = true
+
+# --- quality: how much the model reads and what it is allowed to show.
+[quality]
+max_input_tokens = 80000   # the diff is cut above this (about 4 characters a token)
+min_confidence = 0.6       # a risk below this confidence is not shown
+summary_max_items = 7
