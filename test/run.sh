@@ -691,6 +691,9 @@ while IFS=$'\t' read -r _ r; do
 done < <(grep -v '^#' rules/transient.txt) || true
 check "every rule in rules/transient.txt is a valid regular expression" "[ $bad_rules -eq 0 ]"
 
+# tyler-durden-bot: its Hermes route script, offline (tyler-durden-bot/test_filter.py).
+check "tyler-durden-bot's filter passes its tests" "python3 -m unittest discover -q -s tyler-durden-bot 2>/dev/null"
+
 echo
 if [ "$fails" -ne 0 ]; then
   echo "$fails failed"
